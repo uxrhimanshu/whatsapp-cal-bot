@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: whatsapp-cal-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_TOKEN_B64
+        sync: false
+      - key: TIMEZONE
+        value: Asia/Kolkata
