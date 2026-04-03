@@ -6,38 +6,51 @@ from datetime import date, timedelta
 client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 
-def parse_events(message: str, today: str) -> list[dict]:
-    """Parse a natural language message into a list of calendar events."""
+def parse_message(message: str, today: str) -> dict:
+    """
+    Parse intent and extract structured data from a natural language message.
+
+    Returns one of:
+      {"intent": "create", "events": [...]}
+      {"intent": "view", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "label": "..."}
+      {"intent": "delete", "title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM|null"}
+      {"intent": "edit", "target": {...}, "updates": {...}}
+    """
     tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
+    week_end = (date.fromisoformat(today) + timedelta(days=6)).isoformat()
+    next_week_start = (date.fromisoformat(today) + timedelta(days=7)).isoformat()
+    next_week_end = (date.fromisoformat(today) + timedelta(days=13)).isoformat()
 
-    prompt = f"""Extract all calendar events from this message.
+    prompt = f"""You are a calendar assistant. Classify the intent and extract structured data.
 
-Today is {today}. Tomorrow is {tomorrow}.
+Today is {today}. Tomorrow is {tomorrow}. This week ends {week_end}. Next week is {next_week_start} to {next_week_end}.
 
 Message: "{message}"
 
-Return a JSON array of events. Each event object must have:
-- "title": string (the event name)
-- "date": string in YYYY-MM-DD format (use today's date {today} if not specified)
-- "start_time": string in HH:MM 24-hour format
-- "end_time": string in HH:MM 24-hour format, or null (default to 1 hour after start if not given)
+Classify as one of: create, view, delete, edit.
+
+Return ONLY valid JSON in exactly one of these formats (no explanation, no markdown):
+
+CREATE - user wants to add event(s):
+{{"intent": "create", "events": [{{"title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM or null"}}]}}
+
+VIEW - user wants to see their schedule:
+{{"intent": "view", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "label": "today/tomorrow/this week/next week/etc"}}
+
+DELETE - user wants to remove an event:
+{{"intent": "delete", "title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM or null"}}
+
+EDIT - user wants to modify an existing event:
+{{"intent": "edit", "target": {{"title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM or null"}}, "updates": {{"title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM"}}}}
+(only include fields in "updates" that are actually changing)
 
 Rules:
-- If multiple events are mentioned, return all of them
-- If no date is mentioned, use today ({today})
-- "tomorrow" means {tomorrow}
-- Convert 12-hour time (2 PM → 14:00, 5:56 PM → 17:56, 12 PM → 12:00, 12 AM → 00:00)
-- Return ONLY valid JSON, no explanation, no markdown
-
-Examples:
-Input: "2 PM to 3 PM lunch"
-Output: [{{"title": "Lunch", "date": "{today}", "start_time": "14:00", "end_time": "15:00"}}]
-
-Input: "5:56 PM meeting with manager"
-Output: [{{"title": "Meeting with manager", "date": "{today}", "start_time": "17:56", "end_time": "18:56"}}]
-
-Input: "2 PM to 3 PM lunch and 5:56 PM meeting with manager"
-Output: [{{"title": "Lunch", "date": "{today}", "start_time": "14:00", "end_time": "15:00"}}, {{"title": "Meeting with manager", "date": "{today}", "start_time": "17:56", "end_time": "18:56"}}]"""
+- Use today ({today}) if no date mentioned
+- Convert 12h to 24h (2 PM → 14:00, 5:56 PM → 17:56)
+- "this week" = {today} to {week_end}
+- "next week" = {next_week_start} to {next_week_end}
+- "today" = {today} to {today}
+- "tomorrow" = {tomorrow} to {tomorrow}"""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -46,8 +59,6 @@ Output: [{{"title": "Lunch", "date": "{today}", "start_time": "14:00", "end_time
     )
 
     text = response.content[0].text.strip()
-
-    # Strip markdown code fences if present
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
